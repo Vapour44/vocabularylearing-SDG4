@@ -76,7 +76,7 @@ fun SimpleMainScreen() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.White.copy(alpha = 0.3f))
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.3f)) // 稍微调高点透明度，黑夜模式才好看
         )
 
         Column(
@@ -90,7 +90,9 @@ fun SimpleMainScreen() {
             Card(modifier = Modifier
                 .fillMaxWidth()
                 .padding(6.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.6f))
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                )
             ) {
             BookSection()
             PlanSection()
@@ -267,7 +269,9 @@ fun BookSection() {
             .fillMaxWidth()
             .padding(16.dp),
         //elevation = CardDefaults.elevatedCardElevation(defaultElevation = 6.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = Color.White.copy(alpha = 0.95f))
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+        )
     ) {
         Row(modifier = Modifier.padding(16.dp)) {
             Box(modifier = Modifier.size(70.dp, 100.dp).background(MaterialTheme.colorScheme.primary)) {
@@ -343,7 +347,9 @@ fun FeatureItem(name: String, icon: ImageVector, onClick: () -> Unit) {
         modifier = Modifier
 
             .padding(horizontal = 6.dp, vertical = 8.dp), // 调整外边距
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.85f)), // 85%透明度的白底
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+        ), // 85%透明度的白底
 
     ) {
         Column(
@@ -388,7 +394,9 @@ fun AdItem(title: String, sub: String, details: String) {
             .fillMaxWidth()
             .clickable { expanded = !expanded } // 点击切换状态
             .animateContentSize(),              // ⭐ 自动处理折叠/展开动画
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
