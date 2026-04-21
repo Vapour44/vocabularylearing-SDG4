@@ -56,7 +56,7 @@ class UserViewModel : ViewModel() {
         private set
 
     fun updateProfile(name: String, targetScore: String) {
-        userProfile = UserProfile(name, targetScore)
+        userProfile = userProfile.copy(name = name, targetScore = targetScore)
     }
 
 
