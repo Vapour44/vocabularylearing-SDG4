@@ -170,7 +170,7 @@ fun SimpleMainScreen(navController: NavController, viewModel: UserViewModel) {
 
             Card(modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f) // 适配黑夜模式
                 )
@@ -250,6 +250,15 @@ fun TopSection(userName: String, targetScore: String) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Image(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "back",
+                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.size(28.dp)
+
+
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Image(
                         imageVector = Icons.Default.Search,
                         contentDescription = "Search",
                         colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
@@ -285,6 +294,7 @@ fun ButtonSection() {
     var activeMode by remember { mutableStateOf("None") }
 
     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -328,6 +338,8 @@ fun FeatureSection() {
     var activeFeature by remember { mutableStateOf("None") }
 
     Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        //Text("Hi, $userName", fontSize = 18.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        //Text("Target Band: $targetScore", fontSize = 14.sp, color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             FeatureItem("Reading", Icons.Default.Menu) { activeFeature = if (activeFeature == "Reading") "None" else "Reading" }
             FeatureItem("Training", Icons.Default.Build) { activeFeature = if (activeFeature == "Training") "None" else "Training" }
@@ -359,8 +371,8 @@ fun FeatureItem(name: String, icon: ImageVector, onClick: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.clickable { onClick() }.padding(8.dp)
         ) {
-            Image(imageVector = icon, contentDescription = null, colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary), modifier = Modifier.size(32.dp))
-            Text(text = name, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            Image(imageVector = icon, contentDescription = null, colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary), modifier = Modifier.size(30.dp))
+            Text(text = name, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -391,7 +403,7 @@ fun AdItem(title: String, sub: String, details: String, navController: NavContro
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Text(sub, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -451,6 +463,7 @@ fun CourseDetailScreen(navController: NavController, courseTitle: String) {
                 Text("About this course", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("This is the detailed syllabus for $courseTitle. You will learn advanced techniques to improve your score rapidly.", color = MaterialTheme.colorScheme.onSurface)
+
             }
         }
     }
@@ -487,6 +500,7 @@ fun BookSection() {
 @Composable
 fun PlanSection() {
     Column(modifier = Modifier.padding(16.dp)) {
+
         Text("Today's Plan", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Spacer(modifier = Modifier.height(16.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
