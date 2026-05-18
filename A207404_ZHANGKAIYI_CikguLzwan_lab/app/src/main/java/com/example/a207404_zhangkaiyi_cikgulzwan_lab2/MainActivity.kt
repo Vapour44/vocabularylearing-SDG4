@@ -35,7 +35,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -50,33 +53,90 @@ data class UserProfile(
     val targetScore: String = ""
 )
 
+@androidx.room.Entity(tableName = "word_books")
 data class WordBookItem(
+    @androidx.room.PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
     val count: Int
 )
 
+@androidx.room.Dao
+interface WordBookDao {
+    @androidx.room.Query("SELECT * FROM word_books")
+    fun getAllWordBooks(): kotlinx.coroutines.flow.Flow<List<WordBookItem>>
+
+    @androidx.room.Insert
+    suspend fun insert(book: WordBookItem)
+
+    @androidx.room.Delete
+    suspend fun delete(book: WordBookItem)
+}
+
+@androidx.room.Database(entities = [WordBookItem::class], version = 1, exportSchema = false)
+abstract class AppDatabase : androidx.room.RoomDatabase() {
+    abstract fun wordBookDao(): WordBookDao
+
+    companion object {
+        @Volatile private var INSTANCE: AppDatabase? = null
+
+        fun getInstance(context: android.content.Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = androidx.room.Room.databaseBuilder(
+                    context,
+                    AppDatabase::class.java,
+                    "app_db"
+                ).build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}
+
+class WordBookRepository(private val dao: WordBookDao) {
+    val allWordBooks = dao.getAllWordBooks()
+    suspend fun insert(book: WordBookItem) = dao.insert(book)
+    suspend fun delete(book: WordBookItem) = dao.delete(book)
+}
+
+class UserViewModelFactory(private val repository: WordBookRepository) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return UserViewModel(repository) as T
+    }
+}
+
 // ==========================================
 // ⭐ ViewModel (Shared State & ADD logic)
 // ==========================================
-class UserViewModel : ViewModel() {
+class UserViewModel(private val repository: WordBookRepository) : ViewModel() {
     var userProfile by mutableStateOf(UserProfile())
         private set
 
-    var wordBooks by mutableStateOf(listOf(WordBookItem("Favorite Words", 0)))
+    var wordBooks by mutableStateOf(listOf<WordBookItem>())
         private set
+
+    init {
+        viewModelScope.launch {
+            repository.allWordBooks.collect { list ->
+                wordBooks = list
+            }
+        }
+    }
 
     fun updateProfile(name: String, targetScore: String) {
         userProfile = userProfile.copy(name = name, targetScore = targetScore)
     }
 
     fun addWordBook(title: String) {
-        val newBook = WordBookItem(title = title, count = 0)
-        wordBooks = wordBooks + newBook
+        viewModelScope.launch {
+            repository.insert(WordBookItem(title = title, count = 0))
+        }
     }
 
-    // ⭐ NEW: Function to delete a wordbook
     fun removeWordBook(book: WordBookItem) {
-        wordBooks = wordBooks - book
+        viewModelScope.launch {
+            repository.delete(book)
+        }
     }
 }
 
@@ -107,7 +167,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun IeltsAppNavigation() {
     val navController = rememberNavController()
-    val userViewModel: UserViewModel = viewModel() // Single instance
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val db = AppDatabase.getInstance(context)
+    val repository = WordBookRepository(db.wordBookDao())
+    val userViewModel: UserViewModel = viewModel(factory = UserViewModelFactory(repository))
 
     NavHost(navController = navController, startDestination = "profile_setup") {
         composable("profile_setup") { ProfileSetupScreen(navController, userViewModel) }
