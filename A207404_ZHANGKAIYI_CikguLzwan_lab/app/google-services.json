@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "80236216919",
+    "project_id": "ielts-master-23a5e",
+    "storage_bucket": "ielts-master-23a5e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:80236216919:android:d69b96782aa839241cd912",
+        "android_client_info": {
+          "package_name": "com.example.a207404_zhangkaiyi_cikgulzwan_lab2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA21tZ1tDM0oWlEBgcmncw7-zhOrBQt7WM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -60,6 +61,39 @@ data class WordBookItem(
     val count: Int
 )
 
+data class CommunityWordBook(
+    val id: String = "",
+    val title: String = "",
+    val author: String = "",
+    val count: Int = 0
+)
+
+data class DictionaryResponse(
+    val word: String = "",
+    val meanings: List<Meaning> = emptyList()
+)
+
+data class Meaning(
+    val partOfSpeech: String = "",
+    val definitions: List<Definition> = emptyList()
+)
+
+data class Definition(
+    val definition: String = "",
+    val example: String? = null
+)
+
+interface DictionaryApi {
+    @retrofit2.http.GET("api/v2/entries/en/{word}")
+    suspend fun getDefinition(@retrofit2.http.Path("word") word: String): List<DictionaryResponse>
+}
+
+val dictionaryApi: DictionaryApi = retrofit2.Retrofit.Builder()
+    .baseUrl("https://api.dictionaryapi.dev/")
+    .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
+    .build()
+    .create(DictionaryApi::class.java)
+
 @androidx.room.Dao
 interface WordBookDao {
     @androidx.room.Query("SELECT * FROM word_books")
@@ -70,6 +104,9 @@ interface WordBookDao {
 
     @androidx.room.Delete
     suspend fun delete(book: WordBookItem)
+
+    @androidx.room.Update
+    suspend fun update(book: WordBookItem)
 }
 
 @androidx.room.Database(entities = [WordBookItem::class], version = 1, exportSchema = false)
@@ -97,6 +134,7 @@ class WordBookRepository(private val dao: WordBookDao) {
     val allWordBooks = dao.getAllWordBooks()
     suspend fun insert(book: WordBookItem) = dao.insert(book)
     suspend fun delete(book: WordBookItem) = dao.delete(book)
+    suspend fun update(book: WordBookItem) = dao.update(book)
 }
 
 class UserViewModelFactory(private val repository: WordBookRepository) : ViewModelProvider.Factory {
@@ -114,6 +152,57 @@ class UserViewModel(private val repository: WordBookRepository) : ViewModel() {
 
     var wordBooks by mutableStateOf(listOf<WordBookItem>())
         private set
+
+    private val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+    private val communityCollection = firestore.collection("community_wordbooks")
+
+    var communityWordBooks by mutableStateOf(listOf<CommunityWordBook>())
+        private set
+
+    val reviewWords = listOf(
+        "Ambiguous", "Benevolent", "Cognizant", "Diligent", "Eloquent",
+        "Feasible", "Gregarious", "Heuristic", "Imminent", "Judicious"
+    )
+
+    var currentWordIndex by mutableStateOf(0)
+        private set
+
+    fun nextWord() {
+        currentWordIndex = (currentWordIndex + 1) % reviewWords.size
+    }
+
+    var wordDefinition by mutableStateOf("")
+        private set
+
+    var wordExample by mutableStateOf("")
+        private set
+
+    var isLoadingDefinition by mutableStateOf(false)
+        private set
+
+    fun fetchDefinition(word: String) {
+        isLoadingDefinition = true
+        wordDefinition = ""
+        wordExample = ""
+        viewModelScope.launch {
+            try {
+                val result = dictionaryApi.getDefinition(word)
+                val meaning = result.firstOrNull()?.meanings?.firstOrNull()
+                val definition = meaning?.definitions?.firstOrNull()
+                wordDefinition = definition?.definition ?: "No definition found"
+                wordExample = definition?.example ?: ""
+            } catch (e: Exception) {
+                wordDefinition = "Could not load definition"
+            } finally {
+                isLoadingDefinition = false
+            }
+        }
+    }
+
+    fun clearDefinition() {
+        wordDefinition = ""
+        wordExample = ""
+    }
 
     init {
         viewModelScope.launch {
@@ -137,6 +226,44 @@ class UserViewModel(private val repository: WordBookRepository) : ViewModel() {
         viewModelScope.launch {
             repository.delete(book)
         }
+    }
+
+    fun updateWordBook(book: WordBookItem, newTitle: String) {
+        viewModelScope.launch {
+            repository.update(book.copy(title = newTitle))
+        }
+    }
+
+    fun shareWordBook(title: String, author: String) {
+        val data = hashMapOf(
+            "title" to title,
+            "author" to author,
+            "count" to 0
+        )
+        communityCollection.add(data)
+    }
+
+    fun loadCommunityWordBooks() {
+        communityCollection.get()
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    communityWordBooks = task.result.documents.mapNotNull { doc ->
+                        CommunityWordBook(
+                            id = doc.id,
+                            title = doc.getString("title") ?: "",
+                            author = doc.getString("author") ?: "",
+                            count = doc.getLong("count")?.toInt() ?: 0
+                        )
+                    }
+                }
+            }
+    }
+
+    fun deleteFromCommunity(bookId: String) {
+        communityCollection.document(bookId).delete()
+            .addOnSuccessListener {
+                communityWordBooks = communityWordBooks.filter { it.id != bookId }
+            }
     }
 }
 
@@ -182,7 +309,12 @@ fun IeltsAppNavigation() {
         composable("reading_screen") { ReadingScreen(navController) }
         composable("training_screen") { TrainingScreen(navController) }
         composable("wordbook_screen") { WordbookScreen(navController, userViewModel) }
-        composable("selftest_screen") { SelfTestScreen(navController) }
+        composable("selftest_screen") { SelfTestScreen(navController, userViewModel) }
+        composable("community_screen") { CommunityScreen(navController, userViewModel) }
+        composable("edit_wordbook/{bookId}") { backStackEntry ->
+            val bookId = backStackEntry.arguments?.getString("bookId")?.toIntOrNull() ?: 0
+            EditWordbookScreen(navController, userViewModel, bookId)
+        }
     }
 }
 
@@ -205,12 +337,23 @@ fun ProfileSetupScreen(navController: NavController, viewModel: UserViewModel) {
         Spacer(modifier = Modifier.height(32.dp))
 
         TextField(value = name, onValueChange = { name = it }, label = { Text("Your Name") }, modifier = Modifier.fillMaxWidth())
+        if (name.isBlank()) {
+            Text(
+                text = "Please enter your name",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
         Spacer(modifier = Modifier.height(16.dp))
         TextField(value = targetScore, onValueChange = { targetScore = it }, label = { Text("Target Band Score (e.g. 7.5)") }, modifier = Modifier.fillMaxWidth())
         Spacer(modifier = Modifier.height(32.dp))
 
         Button(
             onClick = {
+                if (name.isBlank()) {
+                    return@Button
+                }
                 viewModel.updateProfile(name, targetScore)
                 navController.navigate("main_screen") { popUpTo("profile_setup") { inclusive = true } }
             },
@@ -408,6 +551,7 @@ fun FeatureSection(navController: NavController) {
             FeatureItem("Training", Icons.Default.Build) { navController.navigate("training_screen") }
             FeatureItem("Wordbook", Icons.Default.List) { navController.navigate("wordbook_screen") }
             FeatureItem("Self-Test", Icons.Default.Check) { navController.navigate("selftest_screen") }
+            FeatureItem("Community", Icons.Default.Person) { navController.navigate("community_screen") }
         }
     }
 }
@@ -804,31 +948,47 @@ fun WordbookScreen(navController: NavController, viewModel: UserViewModel) {
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    // ⭐ Modified Row to accommodate the Delete button
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween // Pushes delete button to the right
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(60.dp, 80.dp).background(MaterialTheme.colorScheme.tertiary)) {
-                                Text("Word\nBook", color = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.align(Alignment.Center), fontSize = 12.sp)
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        // ⭐ Modified Row to accommodate the Delete button
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween // Pushes delete button to the right
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(modifier = Modifier.size(60.dp, 80.dp).background(MaterialTheme.colorScheme.tertiary)) {
+                                    Text("Word\nBook", color = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.align(Alignment.Center), fontSize = 12.sp)
+                                }
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column {
+                                    Text(book.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text("Total: ${book.count} Words", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text(book.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Total: ${book.count} Words", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                            // ⭐ Delete Button
+                            IconButton(onClick = { viewModel.removeWordBook(book) }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete Book",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
                             }
                         }
-
-                        // ⭐ NEW: Delete Button
-                        IconButton(onClick = { viewModel.removeWordBook(book) }) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete Book",
-                                tint = MaterialTheme.colorScheme.error // Uses standard red/error color
-                            )
+                        Button(
+                            onClick = { viewModel.shareWordBook(book.title, viewModel.userProfile.name) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                        ) {
+                            Text("Share to Community", color = MaterialTheme.colorScheme.onSecondary)
+                        }
+                        Button(
+                            onClick = { navController.navigate("edit_wordbook/${book.id}") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("Edit", color = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 }
@@ -876,9 +1036,40 @@ fun WordbookScreen(navController: NavController, viewModel: UserViewModel) {
 // 🚀 Screen 7: Self-Test Screen (Theme Applied)
 // ==========================================
 @Composable
-fun SelfTestScreen(navController: NavController) {
-    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
-        // ⭐ Back Button Header
+fun SelfTestScreen(navController: NavController, viewModel: UserViewModel) {
+    val context = LocalContext.current
+    val sensorManager = context.getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
+    val accelerometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+    var lastShakeTime by remember { mutableStateOf(0L) }
+
+    DisposableEffect(Unit) {
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(event: android.hardware.SensorEvent) {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                val acceleration = Math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
+                val currentTime = System.currentTimeMillis()
+                if (acceleration > 15f && currentTime - lastShakeTime > 1000) {
+                    lastShakeTime = currentTime
+                    viewModel.nextWord()
+                    viewModel.clearDefinition()
+                }
+            }
+            override fun onAccuracyChanged(sensor: android.hardware.Sensor, accuracy: Int) {}
+        }
+        sensorManager.registerListener(listener, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_NORMAL)
+        onDispose {
+            sensorManager.unregisterListener(listener)
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
+    ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = Icons.Default.ArrowBack,
@@ -887,16 +1078,60 @@ fun SelfTestScreen(navController: NavController) {
                 modifier = Modifier.clickable { navController.popBackStack() }
             )
             Spacer(modifier = Modifier.width(16.dp))
-            Text("To Review: 1", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("To Review: ${viewModel.reviewWords.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text("review word", fontSize = 38.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Box(
+            modifier = Modifier.fillMaxWidth().height(200.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    viewModel.reviewWords[viewModel.currentWordIndex],
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Shake to next word",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+
+        if (viewModel.isLoadingDefinition) {
+            Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+
+        if (viewModel.wordDefinition.isNotEmpty()) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Definition", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(viewModel.wordDefinition, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                    if (viewModel.wordExample.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Example:", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary, fontSize = 12.sp)
+                        Text("\"${viewModel.wordExample}\"", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Row(modifier = Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Button(
-                onClick = { /* Logic */ },
+                onClick = {
+                    viewModel.fetchDefinition(viewModel.reviewWords[viewModel.currentWordIndex])
+                },
                 modifier = Modifier.weight(1f).height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(8.dp),
@@ -906,7 +1141,10 @@ fun SelfTestScreen(navController: NavController) {
             }
             Spacer(modifier = Modifier.width(16.dp))
             Button(
-                onClick = { /* Logic */ },
+                onClick = {
+                    viewModel.nextWord()
+                    viewModel.clearDefinition()
+                },
                 modifier = Modifier.weight(1f).height(60.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                 shape = RoundedCornerShape(8.dp),
@@ -914,6 +1152,107 @@ fun SelfTestScreen(navController: NavController) {
             ) {
                 Text("Remember", color = MaterialTheme.colorScheme.onPrimary, fontSize = 15.sp)
             }
+        }
+    }
+}
+
+// ==========================================
+// 🚀 Screen 8: Community Screen
+// ==========================================
+@Composable
+fun CommunityScreen(navController: NavController, viewModel: UserViewModel) {
+    LaunchedEffect(Unit) {
+        viewModel.loadCommunityWordBooks()
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+            Icon(
+                imageVector = Icons.Default.ArrowBack,
+                contentDescription = "Back",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { navController.popBackStack() }
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text("Community Wordbooks", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        }
+
+        LazyColumn(modifier = Modifier.weight(1f).padding(16.dp)) {
+            items(viewModel.communityWordBooks) { book ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(book.title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 18.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("By: ${book.author}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (book.author == viewModel.userProfile.name) {
+                            IconButton(onClick = { viewModel.deleteFromCommunity(book.id) }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// 🚀 Screen 9: Edit Wordbook Screen
+// ==========================================
+@Composable
+fun EditWordbookScreen(navController: NavController, viewModel: UserViewModel, bookId: Int) {
+    val book = viewModel.wordBooks.find { it.id == bookId }
+    var newTitle by remember { mutableStateOf(book?.title ?: "") }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(24.dp)
+            .statusBarsPadding()
+    ) {
+        Icon(
+            imageVector = Icons.Default.ArrowBack,
+            contentDescription = "Back",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(32.dp).clickable { navController.popBackStack() }
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Edit Wordbook", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Spacer(modifier = Modifier.height(32.dp))
+        TextField(
+            value = newTitle,
+            onValueChange = { newTitle = it },
+            label = { Text("Wordbook Name") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = {
+                if (newTitle.isNotBlank() && book != null) {
+                    viewModel.updateWordBook(book, newTitle)
+                    navController.popBackStack()
+                }
+            },
+            modifier = Modifier.fillMaxWidth().height(50.dp)
+        ) {
+            Text("Save Changes", fontSize = 18.sp)
         }
     }
 }
