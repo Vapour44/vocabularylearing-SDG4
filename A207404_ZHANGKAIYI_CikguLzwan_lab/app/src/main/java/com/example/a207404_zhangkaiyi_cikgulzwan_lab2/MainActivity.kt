@@ -68,28 +68,44 @@ data class CommunityWordBook(
     val count: Int = 0
 )
 
-data class DictionaryResponse(
-    val word: String = "",
-    val meanings: List<Meaning> = emptyList()
-)
-
-data class Meaning(
-    val partOfSpeech: String = "",
-    val definitions: List<Definition> = emptyList()
-)
-
-data class Definition(
+// Wiktionary REST API — https://en.wiktionary.org/api/rest_v1/page/definition/{word}
+data class WiktionaryDefinitionItem(
     val definition: String = "",
-    val example: String? = null
+    val examples: List<String>? = null
+)
+
+data class WiktionaryMeaning(
+    val partOfSpeech: String = "",
+    val definitions: List<WiktionaryDefinitionItem> = emptyList()
 )
 
 interface DictionaryApi {
-    @retrofit2.http.GET("api/v2/entries/en/{word}")
-    suspend fun getDefinition(@retrofit2.http.Path("word") word: String): List<DictionaryResponse>
+    @retrofit2.http.GET("api/rest_v1/page/definition/{word}")
+    suspend fun getDefinition(
+        @retrofit2.http.Path("word") word: String
+    ): Map<String, List<WiktionaryMeaning>>
 }
 
+private fun String.stripHtml(): String =
+    this.replace(Regex("<[^>]*>"), "")
+        .replace(Regex("&[a-zA-Z]+;"), " ")
+        .trim()
+
 val dictionaryApi: DictionaryApi = retrofit2.Retrofit.Builder()
-    .baseUrl("https://api.dictionaryapi.dev/")
+    .baseUrl("https://en.wiktionary.org/")
+    .client(
+        okhttp3.OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("User-Agent", "IELTSMasterApp/1.0 (Android; vocabulary learning)")
+                        .build()
+                )
+            }
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    )
     .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
     .build()
     .create(DictionaryApi::class.java)
@@ -186,13 +202,13 @@ class UserViewModel(private val repository: WordBookRepository) : ViewModel() {
         wordExample = ""
         viewModelScope.launch {
             try {
-                val result = dictionaryApi.getDefinition(word)
-                val meaning = result.firstOrNull()?.meanings?.firstOrNull()
-                val definition = meaning?.definitions?.firstOrNull()
-                wordDefinition = definition?.definition ?: "No definition found"
-                wordExample = definition?.example ?: ""
+                val result = dictionaryApi.getDefinition(word.lowercase())
+                val meanings = result["en"]
+                val firstDef = meanings?.firstOrNull()?.definitions?.firstOrNull()
+                wordDefinition = firstDef?.definition?.stripHtml() ?: "No definition found"
+                wordExample = firstDef?.examples?.firstOrNull()?.stripHtml() ?: ""
             } catch (e: Exception) {
-                wordDefinition = "Could not load definition"
+                wordDefinition = "Could not load definition. Check your internet connection."
             } finally {
                 isLoadingDefinition = false
             }
@@ -613,7 +629,7 @@ fun AdItem(title: String, sub: String, details: String, navController: NavContro
 
             if (expanded) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(text = details, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -755,36 +771,28 @@ fun ReadingScreen(navController: NavController) {
             Text("View Report >", color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f))
         }
 
-        // ⭐ Horizontal Scrollable Book Display (Now with spaced items)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .horizontalScroll(rememberScrollState())
                 .padding(24.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp), // Adds space between books
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Book 1
             ReadingBookCard("FROZEN", "Disney Classic", 0.8f, "80%", Color(0xFF74C6DA))
-
-            // ⭐ Book 2 (New book added to enable scrolling)
             ReadingBookCard("ZOOPHOBIA", "Disney Modern", 0.3f, "30%", Color(0xFFFFB74D))
         }
 
-        // Bottom Tabs & Navigation
-
-            Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-            Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceAround) {
-                BottomNavItem("For You", Icons.Default.Home, false) { navController.popBackStack() }
-                BottomNavItem("Reading", Icons.Default.Menu, true) { }
-                BottomNavItem("Profile", Icons.Default.Person, false) { }
-            }
-
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceAround) {
+            BottomNavItem("For You", Icons.Default.Home, false) { navController.popBackStack() }
+            BottomNavItem("Reading", Icons.Default.Menu, true) { }
+            BottomNavItem("Profile", Icons.Default.Person, false) { }
+        }
     }
 }
 
-// ⭐ NEW: Reusable Book Card Component to keep code clean
 @Composable
 fun ReadingBookCard(title: String, subtitle: String, progress: Float, progressText: String, coverColor: Color) {
     Card(
@@ -804,13 +812,13 @@ fun ReadingBookCard(title: String, subtitle: String, progress: Float, progressTe
 
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text("Read ", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                LinearProgressIndicator(progress = progress, modifier = Modifier.weight(1f).height(4.dp), color = MaterialTheme.colorScheme.primary)
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(4.dp), color = MaterialTheme.colorScheme.primary)
                 Text(" $progressText", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(modifier = Modifier.weight(1f))
 
             Button(
-                onClick = { /* Action */ },
+                onClick = { },
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
